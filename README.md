@@ -40,6 +40,3 @@ Centroids are iteratively updated by calculating the mean of all assigned vector
    streamlit run market_clusterer.py
 
 Developed for academic research and data portfolio enhancement in Data Science & Applied Statistics.
-   ```bash
-   git clone [https://github.com/YOUR_USERNAME/market-regime-clusterer.git](https://github.com/YOUR_USERNAME/market-regime-clusterer.git)
-   cd market-regime-clusterer
