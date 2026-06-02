@@ -5,7 +5,7 @@ An interactive, web-based unsupervised machine learning dashboard designed to an
 Instead of relying on standard machine learning libraries like `scikit-learn`, the **K-Means Clustering algorithm in this project was built entirely from scratch using pure NumPy**, demonstrating a deep foundational understanding of vector calculations, distance metrics, and iterative optimization.
 
 ## 🚀 Live Demo
-You can access the live interactive dashboard here: **[INSERT YOUR STREAMLIT LAUNCHPAD LINK HERE]**
+You can access the live interactive dashboard here: **[https://dimss-market-regime.streamlit.app/]**
 
 ##  Key Features
 - **Algorithm From Scratch:** Complete Python implementation of the K-Means clustering algorithm using vectorization in NumPy.
