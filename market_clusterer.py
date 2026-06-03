@@ -1,48 +1,82 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import yfinance as yf
 
-#PAGE CONFIGURATION
-st.set_page_config(page_title="Market Volatility Clusterer", layout="wide")
-st.title("📈 Market Volatility Clustering Engine (Pure NumPy K-Means)")
-st.markdown("An unsupervised machine learning dashboard to cluster market regimes based on returns and volatility.")
+# --- KONFIGURASI HALAMAN ---
+st.set_page_config(page_title="Analisis Volatilitas Pasar", layout="wide")
+st.title("📈 Mesin Klasterisasi Volatilitas Pasar (K-Means Murni)")
+st.markdown("Dashboard *machine learning* tanpa pengawasan (*unsupervised*) untuk mengelompokkan rezim pasar berdasarkan tingkat keuntungan dan volatilitas.")
 st.divider()
 
-#1. SIMULASI DATA PASAR 
+# --- 1. UNDUH DATA PASAR DENGAN SISTEM CADANGAN (AUTOMATIC FALLBACK) ---
 @st.cache_data
-def generate_market_data():
-    """Generates synthetic crypto/forex market data with distinct regimes."""
-    np.random.seed(42)
-    n_days = 200
-    
-    #Kumpulan kondisi pasar (Sideways, Trending, High Volatility)
-    regime_1 = np.random.normal(loc=0.0, scale=0.5, size=80)    
-    regime_2 = np.random.normal(loc=0.2, scale=1.2, size=60)    
-    regime_3 = np.random.normal(loc=-0.4, scale=1.8, size=60)   
-    
-    all_returns = np.concatenate([regime_1, regime_2, regime_3])
-    
-    #Rekonstruksi menjadi pergerakan harga akumulatif
-    price = 1000
-    price_history = []
-    for r in all_returns:
-        price += price * (r / 100)
-        price_history.append(price)
+def fetch_real_market_data(ticker, period="1y"):
+    """Mengambil data asli dari Yahoo Finance dengan sistem cadangan simulasi jika koneksi diblokir."""
+    try:
+        import requests
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        })
         
+        asset = yf.Ticker(ticker, session=session)
+        data = asset.history(period=period)
+        
+        # JIKA BERHASIL TERHUBUNG KE YAHOO FINANCE
+        if not data.empty:
+            df = pd.DataFrame()
+            df['Close'] = data['Close'].values
+            df['Daily_Return'] = df['Close'].pct_change() * 100
+            df['Rolling_Vol'] = df['Daily_Return'].rolling(window=5, min_periods=1).std().fillna(0)
+            df['Tanggal'] = pd.to_datetime(data.index).tz_localize(None)
+            df['Hari'] = np.arange(1, len(df) + 1)
+            df.dropna(inplace=True)
+            return df, "🟢 Berhasil Terhubung: Menampilkan Data Riil Secara Langsung dari Yahoo Finance API"
+            
+    except Exception:
+        pass
+        
+    # --- RENCANA CADANGAN: JIKA YAHOO MEMBLOKIR (SIMULASI STOKASTIK REPRISAL) ---
+    np.random.seed(42)
+    n_days = 250 if period == "1y" else (125 if period == "6m" else 500)
+    
+    # Karakteristik volatilitas & harga awal tiap aset
+    if "BTC" in ticker:
+        start_price, mu, sigma, label = 65000, 0.05, 3.5, "Bitcoin (BTC-USD)"
+    elif "ETH" in ticker:
+        start_price, mu, sigma, label = 3200, 0.04, 4.0, "Ethereum (ETH-USD)"
+    elif "GC=F" in ticker:
+        start_price, mu, sigma, label = 2300, 0.01, 0.9, "Emas (GC=F)"
+    elif "AAPL" in ticker:
+        start_price, mu, sigma, label = 175, 0.02, 1.5, "Saham Apple (AAPL)"
+    else:
+        start_price, mu, sigma, label = 5100, 0.02, 1.1, "Indeks S&P 500 (^GSPC)"
+        
+    # Pembuatan data tiruan menggunakan Geometric Brownian Motion
+    returns = np.random.normal(loc=mu/n_days, scale=sigma/100, size=n_days)
+    price_history = [start_price]
+    for r in returns:
+        price_history.append(price_history[-1] * (1 + r))
+        
+    date_range = pd.date_range(end=pd.Timestamp.now(), periods=n_days + 1, freq='B')
+    
     df = pd.DataFrame({
-        'Day': np.arange(1, n_days + 1),
-        'Price': price_history,
-        'Daily_Return': all_returns,
-        'Rolling_Vol': pd.Series(all_returns).rolling(window=5, min_periods=1).std().fillna(0).values
+        'Tanggal': date_range,
+        'Close': price_history
     })
-    return df
+    df['Daily_Return'] = df['Close'].pct_change() * 100
+    df['Rolling_Vol'] = df['Daily_Return'].rolling(window=5, min_periods=1).std().fillna(0)
+    df['Hari'] = np.arange(1, len(df) + 1)
+    df.dropna(inplace=True)
+    
+    return df, f"⚠️ Koneksi Yahoo Finance Terbatasi/RTO. Mengaktifkan Mesin Simulasi Stokastik {label} Secara Otomatis."
 
-df_market = generate_market_data()
-
-#2. ALGORITMA K-MEANS FROM SCRATCH 
+# --- 2. ALGORITMA K-MEANS BUATAN SENDIRI (FROM SCRATCH) ---
 def custom_kmeans(X, k, max_iters=100):
-    """Pure NumPy implementation of K-Means Clustering."""
+    """Implementasi K-Means Clustering menggunakan matematika murni NumPy."""
     n_samples = X.shape[0]
+    np.random.seed(42)
     random_indices = np.random.choice(n_samples, k, replace=False)
     centroids = X[random_indices]
     
@@ -58,33 +92,67 @@ def custom_kmeans(X, k, max_iters=100):
         
     return cluster_labels, centroids
 
-#3. SIDEBAR: KONTROL PARAMETER 
-st.sidebar.header("🎯 Cluster Parameters")
-k_clusters = st.sidebar.slider("Number of Clusters (K)", min_value=2, max_value=5, value=3)
-max_iter_input = st.sidebar.number_input("Max K-Means Iterations", value=50, step=5)
+# --- 3. SIDEBAR: KONTROL PARAMETER & PILIHAN ASET ---
+st.sidebar.header("🎛️ Kontrol Pasar & Model")
 
-#4. DATA PREPARATION & PROCESSING
-X_features = df_market[['Daily_Return', 'Rolling_Vol']].values
+# Menu Pilihan Aset
+asset_mapping = {
+    "Bitcoin (BTC-USD)": "BTC-USD",
+    "Ethereum (ETH-USD)": "ETH-USD",
+    "Emas (GC=F)": "GC=F",
+    "Saham Apple (AAPL)": "AAPL",
+    "Indeks S&P 500 (^GSPC)": "^GSPC"
+}
+asset_choice = st.sidebar.selectbox("Pilih Aset Pasar", list(asset_mapping.keys()))
+ticker_symbol = asset_mapping[asset_choice]
+
+# Pilihan Rentang Waktu
+time_period = st.sidebar.selectbox("Rentang Waktu Histori", ["6m", "1y", "2y"], index=1)
+
+st.sidebar.divider()
+k_clusters = st.sidebar.slider("Jumlah Klaster (K)", min_value=2, max_value=5, value=3)
+max_iter_input = st.sidebar.number_input("Maksimal Iterasi K-Means", value=50, step=5)
+
+# --- 4. PEMPROSESAN DATA ---
+df_market, connection_status = fetch_real_market_data(ticker_symbol, period=time_period)
+
+# Tampilkan banner status koneksi API di atas dashboard
+if "🟢" in connection_status:
+    st.success(connection_status)
+else:
+    st.info(connection_status)
+
+# Format nama kolom untuk kebutuhan grafik visualisasi
+df_market.rename(columns={
+    'Daily_Return': 'Keuntungan Harian (%)',
+    'Rolling_Vol': 'Tingkat Volatilitas',
+    'Cluster': 'Klaster'
+}, inplace=True)
+
+# Jalankan Klasterisasi K-Means murni
+X_features = df_market[['Keuntungan Harian (%)', 'Tingkat Volatilitas']].values
 labels, final_centroids = custom_kmeans(X_features, k=k_clusters, max_iters=max_iter_input)
-df_market['Cluster'] = labels.astype(str)
+df_market['Klaster'] = labels.astype(str)
 
-#5. DASHBOARD DISPLAY 
+# --- 5. VISUALISASI DASHBOARD ---
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.subheader("📉 Market Price History")
-    st.line_chart(df_market.set_index("Day")["Price"], use_container_width=True)
+    st.subheader(f"📉 Histori Pergerakan Harga")
+    st.line_chart(data=df_market, x='Tanggal', y='Close', use_container_width=True)
+    st.caption(f"Grafik harga penutupan historis untuk komponen {asset_choice}.")
 
 with col2:
-    st.subheader("🎯 Feature Space Clustering (Return vs Volatility)")
+    st.subheader("🎯 Pemetaan Rezim Pasar (Return vs Volatilitas)")
     st.scatter_chart(
         data=df_market,
-        x='Daily_Return',
-        y='Rolling_Vol',
-        color='Cluster',
+        x='Keuntungan Harian (%)',
+        y='Tingkat Volatilitas',
+        color='Klaster',
         use_container_width=True
     )
+    st.caption("Hasil pembagian rezim otomatis: Sumbu X (Persentase Return), Sumbu Y (Tingkat Gejolak/Volatilitas).")
 
 st.divider()
-st.subheader("📋 Real-Time Clustered Market Logs")
-st.dataframe(df_market, use_container_width=True)
+st.subheader("📋 Log Data Riwayat Pasar Terklaster")
+st.dataframe(df_market[['Tanggal', 'Close', 'Keuntungan Harian (%)', 'Tingkat Volatilitas', 'Klaster']], use_container_width=True)
