@@ -1,8 +1,10 @@
 streamlit
 pandas
 numpy
-<<<<<<< HEAD
+plotly
+xgboost
+scikit-learn
+imbalanced-learn
+shap
+pyyaml
 yfinance
-=======
-yfinance
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
