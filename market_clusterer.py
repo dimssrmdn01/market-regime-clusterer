@@ -1,298 +1,169 @@
-import streamlit as st
-import pandas as pd
+import os
 import numpy as np
-import yfinance as yf
+import pandas as pd
+import streamlit as st
+import plotly.express as px
+import sqlite3
+from typing import Tuple
 
-<<<<<<< HEAD
-# --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Analisis Volatilitas Pasar", layout="wide")
-st.title("📈 Mesin Analisis Rezim & Peramalan Tren Pasar Finansial")
-st.markdown("Dashboard *unsupervised machine learning* dan peramalan kuantitatif murni dari *scratch* (NumPy murni, tanpa scikit-learn).")
-st.divider()
+# Setup konfigurasi halaman Streamlit
+st.set_page_config(page_title="Market Volatility Clustering Engine", layout="wide")
 
-# --- 1. UNDUH DATA PASAR DENGAN SISTEM CADANGAN (AUTOMATIC FALLBACK) ---
-=======
-#KONFIGURASI HALAMAN 
-st.set_page_config(page_title="Analisis Volatilitas Pasar", layout="wide")
-st.title("📈 Mesin Klasterisasi Volatilitas Pasar (K-Means Murni)")
-st.markdown("Dashboard *machine learning* tanpa pengawasan (*unsupervised*) untuk mengelompokkan rezim pasar berdasarkan tingkat keuntungan dan volatilitas.")
-st.divider()
+class DatabaseManager:
+    """Mengatur operasi penyimpanan metrik stabilitas klaster ke dalam SQLite database."""
+    
+    def __init__(self, db_name: str = "market_regimes.db"):
+        self.db_name = db_name
 
-#1. UNDUH DATA PASAR DENGAN SISTEM CADANGAN (AUTOMATIC FALLBACK)
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
-@st.cache_data
-def fetch_real_market_data(ticker, period="1y"):
-    """Mengambil data asli dari Yahoo Finance dengan sistem cadangan simulasi jika koneksi diblokir."""
-    try:
-        import requests
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        })
+    def init_db(self) -> None:
+        """Inisialisasi tabel database relasional jika belum terbentuk."""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cluster_stability_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                k_clusters INTEGER,
+                inertia_score REAL,
+                iterations_converged INTEGER
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    def log_stability_metrics(self, k: int, inertia: float, iterations: int) -> None:
+        """Menyimpan metrik performa algoritma ke dalam database."""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute('''
+            INSERT INTO cluster_stability_logs (timestamp, k_clusters, inertia_score, iterations_converged)
+            VALUES (?, ?, ?, ?)
+        ''', (timestamp, k, float(inertia), int(iterations)))
+        conn.commit()
+        conn.close()
+
+    def fetch_latest_logs(self, limit: int = 5) -> pd.DataFrame:
+        """Mengambil histori log audit terbaru dari tabel database."""
+        conn = sqlite3.connect(self.db_name)
+        query = f"SELECT * FROM cluster_stability_logs ORDER BY id DESC LIMIT {limit}"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+
+
+class CustomKMeans:
+    """Implementasi algoritma K-Means Clustering dari dasar menggunakan matriks NumPy."""
+    
+    def __init__(self, k: int = 3, max_iters: int = 100, tol: float = 1e-4):
+        self.k = k
+        self.max_iters = max_iters
+        self.tol = tol
+        self.centroids = None
         
-        asset = yf.Ticker(ticker, session=session)
-        data = asset.history(period=period)
+    def fit(self, X: np.ndarray) -> Tuple[np.ndarray, int]:
+        """Proses iterasi optimasi penempatan nilai centroid."""
+        np.random.seed(42)
+        random_indices = np.random.choice(X.shape[0], self.k, replace=False)
+        self.centroids = X[random_indices]
         
-<<<<<<< HEAD
-=======
-        #JIKA BERHASIL TERHUBUNG KE YAHOO FINANCE
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
-        if not data.empty:
-            df = pd.DataFrame()
-            df['Close'] = data['Close'].values
-            df['Daily_Return'] = df['Close'].pct_change() * 100
-            df['Rolling_Vol'] = df['Daily_Return'].rolling(window=5, min_periods=1).std().fillna(0)
-            df['Tanggal'] = pd.to_datetime(data.index).tz_localize(None)
-            df['Hari'] = np.arange(1, len(df) + 1)
-            df.dropna(inplace=True)
-            return df, "🟢 Berhasil Terhubung: Menampilkan Data Riil Secara Langsung dari Yahoo Finance API"
+        for i in range(self.max_iters):
+            distances = np.linalg.norm(X[:, np.newaxis] - self.centroids, axis=2)
+            labels = np.argmin(distances, axis=1)
             
-    except Exception:
-        pass
-        
-<<<<<<< HEAD
-    # --- RENCANA CADANGAN: JIKA YAHOO MEMBLOKIR (SIMULASI STOKASTIK) ---
+            old_centroids = self.centroids.copy()
+            for cluster_idx in range(self.k):
+                cluster_points = X[labels == cluster_idx]
+                if len(cluster_points) > 0:
+                    self.centroids[cluster_idx] = cluster_points.mean(axis=0)
+            
+            if np.linalg.norm(self.centroids - old_centroids) < self.tol:
+                return labels, i + 1
+                
+        return labels, self.max_iters
+
+    def calculate_inertia(self, X: np.ndarray, labels: np.ndarray) -> float:
+        """Menghitung metrik stabilitas Within-Cluster Sum of Squares."""
+        inertia = 0.0
+        for cluster_idx in range(self.k):
+            cluster_points = X[labels == cluster_idx]
+            if len(cluster_points) > 0:
+                inertia += np.sum((cluster_points - self.centroids[cluster_idx]) ** 2)
+        return float(inertia)
+
+
+@st.cache_data
+def generate_market_data() -> pd.DataFrame:
+    """Generasi dataset simulasi pergerakan imbal hasil dan volatilitas pasar."""
     np.random.seed(42)
-    n_days = 250 if period == "1y" else (125 if period == "6m" else 500)
+    regime_1 = np.random.normal(loc=[0.02, 0.12], scale=[0.01, 0.02], size=(150, 2))  # Sideways
+    regime_2 = np.random.normal(loc=[0.06, 0.28], scale=[0.02, 0.04], size=(150, 2))  # Bull Run
+    regime_3 = np.random.normal(loc=[-0.09, 0.45], scale=[0.04, 0.06], size=(150, 2)) # Crash Zone
     
-=======
-    #RENCANA CADANGAN: JIKA YAHOO MEMBLOKIR (SIMULASI STOKASTIK REPRISAL) 
-    np.random.seed(42)
-    n_days = 250 if period == "1y" else (125 if period == "6m" else 500)
-    
-    #Karakteristik volatilitas & harga awal tiap aset
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
-    if "BTC" in ticker:
-        start_price, mu, sigma, label = 65000, 0.05, 3.5, "Bitcoin (BTC-USD)"
-    elif "ETH" in ticker:
-        start_price, mu, sigma, label = 3200, 0.04, 4.0, "Ethereum (ETH-USD)"
-    elif "GC=F" in ticker:
-        start_price, mu, sigma, label = 2300, 0.01, 0.9, "Emas (GC=F)"
-    elif "AAPL" in ticker:
-        start_price, mu, sigma, label = 175, 0.02, 1.5, "Saham Apple (AAPL)"
-    else:
-        start_price, mu, sigma, label = 5100, 0.02, 1.1, "Indeks S&P 500 (^GSPC)"
-        
-<<<<<<< HEAD
-=======
-    #Pembuatan data tiruan menggunakan Geometric Brownian Motion
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
-    returns = np.random.normal(loc=mu/n_days, scale=sigma/100, size=n_days)
-    price_history = [start_price]
-    for r in returns:
-        price_history.append(price_history[-1] * (1 + r))
-        
-    date_range = pd.date_range(end=pd.Timestamp.now(), periods=n_days + 1, freq='B')
-    
-    df = pd.DataFrame({
-        'Tanggal': date_range,
-        'Close': price_history
-    })
-    df['Daily_Return'] = df['Close'].pct_change() * 100
-    df['Rolling_Vol'] = df['Daily_Return'].rolling(window=5, min_periods=1).std().fillna(0)
-    df['Hari'] = np.arange(1, len(df) + 1)
-    df.dropna(inplace=True)
-    
-    return df, f"⚠️ Koneksi Yahoo Finance Terbatasi/RTO. Mengaktifkan Mesin Simulasi Stokastik {label} Secara Otomatis."
+    data = np.vstack([regime_1, regime_2, regime_3])
+    df = pd.DataFrame(data, columns=['Daily_Returns', 'Rolling_Volatility'])
+    return df
 
-<<<<<<< HEAD
-# --- 2. ALGORITMA K-MEANS BUATAN SENDIRI (FROM SCRATCH) ---
-=======
-#2. ALGORITMA K-MEANS BUATAN SENDIRI (FROM SCRATCH) 
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
-def custom_kmeans(X, k, max_iters=100):
-    """Implementasi K-Means Clustering menggunakan matematika murni NumPy."""
-    n_samples = X.shape[0]
-    np.random.seed(42)
-    random_indices = np.random.choice(n_samples, k, replace=False)
-    centroids = X[random_indices]
-    
-    for _ in range(max_iters):
-        distances = np.sqrt(((X[:, np.newaxis, :] - centroids) ** 2).sum(axis=2))
-        cluster_labels = np.argmin(distances, axis=1)
-        
-        new_centroids = np.array([X[cluster_labels == j].mean(axis=0) if len(X[cluster_labels == j]) > 0 else centroids[j] for j in range(k)])
-        
-        if np.allclose(centroids, new_centroids):
-            break
-        centroids = new_centroids
-        
-    return cluster_labels, centroids
+# Inisialisasi Database
+db = DatabaseManager()
+db.init_db()
 
-<<<<<<< HEAD
-# --- 3. FUNGSI PERAMALAN TREN MURNI NUMPY (REGRESI LINEAR OLS) ---
-def hitung_tren_masa_depan(df, hari_ke_depan=30):
-    """Menghitung proyeksi tren harga ke depan menggunakan rumus matematika murni."""
-    X = df['Hari'].values
-    y = df['Close'].values
-    n = len(X)
-    
-    # Rumus Linear Regression Slope (m) & Intercept (c)
-    m = (n * np.sum(X * y) - np.sum(X) * np.sum(y)) / (n * np.sum(X**2) - (np.sum(X))**2)
-    c = (np.sum(y) - m * np.sum(X)) / n
-    
-    # Proyeksi indeks hari dan harga masa depan
-    hari_mendatang = np.arange(X[-1] + 1, X[-1] + 1 + hari_ke_depan)
-    harga_proyeksi = m * hari_mendatang + c
-    
-    # Pembuatan komponen tanggal proyeksi baru (Business Days)
-    tanggal_terakhir = df['Tanggal'].max()
-    tanggal_mendatang = pd.date_range(start=tanggal_terakhir + pd.Timedelta(days=1), periods=hari_ke_depan, freq='B')
-    
-    df_proyeksi = pd.DataFrame({
-        'Tanggal': tanggal_mendatang,
-        'Proyeksi Harga': harga_proyeksi
-    })
-    return df_proyeksi, m
+# Render Komponen Judul Aplikasi
+st.title("Market Volatility Clustering Engine")
+st.subheader("Analisis Segmentasi Regime Pasar Menggunakan K-Means Pure NumPy dan Sinkronisasi SQL")
+st.write("---")
 
-# --- 4. SIDEBAR: KONTROL PARAMETER & PILIHAN ASET ---
-st.sidebar.header("🎛️ Kontrol Pasar & Model")
-=======
-#3. SIDEBAR: KONTROL PARAMETER & PILIHAN ASET 
-st.sidebar.header("🎛️ Kontrol Pasar & Model")
-
-#Menu Pilihan Aset
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
-asset_mapping = {
-    "Bitcoin (BTC-USD)": "BTC-USD",
-    "Ethereum (ETH-USD)": "ETH-USD",
-    "Emas (GC=F)": "GC=F",
-    "Saham Apple (AAPL)": "AAPL",
-    "Indeks S&P 500 (^GSPC)": "^GSPC"
-}
-asset_choice = st.sidebar.selectbox("Pilih Aset Pasar", list(asset_mapping.keys()))
-ticker_symbol = asset_mapping[asset_choice]
-<<<<<<< HEAD
-time_period = st.sidebar.selectbox("Rentang Waktu Histori", ["6m", "1y", "2y"], index=1)
-
-st.sidebar.divider()
-st.sidebar.subheader("🎯 Parameter Klasterisasi")
+# Panel Kontrol Utama pada Sidebar
+st.sidebar.header("Konfigurasi Parameter Algoritma")
 k_clusters = st.sidebar.slider("Jumlah Klaster (K)", min_value=2, max_value=5, value=3)
-max_iter_input = st.sidebar.number_input("Maksimal Iterasi K-Means", value=50, step=5)
+max_iterations = st.sidebar.slider("Maksimum Iterasi", min_value=10, max_value=200, value=100)
 
-st.sidebar.divider()
-st.sidebar.subheader("🔮 Parameter Peramalan")
-hari_proyeksi = st.sidebar.slider("Durasi Proyeksi (Hari)", min_value=7, max_value=90, value=30, step=7)
+# Proses Ingesti Data Simulasi Pasar
+df_market = generate_market_data()
+X_matrix = df_market[['Daily_Returns', 'Rolling_Volatility']].values
 
-# --- 5. PEMPROSESAN DATA ---
-df_market, connection_status = fetch_real_market_data(ticker_symbol, period=time_period)
+# Eksekusi Pipeline Matematika K-Means
+model = CustomKMeans(k=k_clusters, max_iters=max_iterations)
+labels, iterations_run = model.fit(X_matrix)
+inertia_val = model.calculate_inertia(X_matrix, labels)
 
-=======
+df_market['Cluster'] = labels.astype(str)
 
-#Pilihan Rentang Waktu
-time_period = st.sidebar.selectbox("Rentang Waktu Histori", ["6m", "1y", "2y"], index=1)
+# Layout Tampilan Metrik Evaluasi Utama
+col_m1, col_m2, col_m3 = st.columns(3)
+with col_m1:
+    st.metric(label="Klaster K Aktif", value=f"{k_clusters} Regimes")
+with col_m2:
+    st.metric(label="Iterasi Hingga Konvergen", value=f"{iterations_run} Siklus")
+with col_m3:
+    st.metric(label="Skor Inertia Penyelarasan", value=f"{round(inertia_val, 4)}")
 
-st.sidebar.divider()
-k_clusters = st.sidebar.slider("Jumlah Klaster (K)", min_value=2, max_value=5, value=3)
-max_iter_input = st.sidebar.number_input("Maksimal Iterasi K-Means", value=50, step=5)
+st.write("---")
 
-#4. PEMPROSESAN DATA 
-df_market, connection_status = fetch_real_market_data(ticker_symbol, period=time_period)
+col_left, col_right = st.columns([1.8, 1.2])
 
-#Tampilkan banner status koneksi API di atas dashboard
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
-if "🟢" in connection_status:
-    st.success(connection_status)
+with col_left:
+    st.markdown("### Visualisasi Spatial Analisis Regime Pasar")
+    fig = px.scatter(df_market, x='Daily_Returns', y='Rolling_Volatility', color='Cluster',
+                     title="Segmentasi Volatilitas Menggunakan K-Means Berbasis NumPy",
+                     labels={'Daily_Returns': 'Daily Returns', 'Rolling_Volatility': 'Rolling Volatility'},
+                     color_discrete_sequence=px.colors.qualitative.Safe)
+    st.plotly_chart(fig, use_container_width=True)
+
+with col_right:
+    st.markdown("### Manajemen Kepatuhan Data Model")
+    st.write("Simpan dan audit parameter performa model penempatan klaster pasar ke dalam database relasional lokal.")
+    
+    if st.button("Simpan Metrik Stabilitas ke SQL"):
+        db.log_stability_metrics(k_clusters, inertia_val, iterations_run)
+        st.success("Performa model berhasil dikunci ke dalam tabel cluster_stability_logs.")
+
+# Tampilan Tabel Audit Historis di Bagian Dasar Halaman
+st.write("---")
+st.markdown("### Audit Log Histori Performa Model (Live Query SQL Database)")
+df_historical_logs = db.fetch_latest_logs(limit=5)
+
+if not df_historical_logs.empty:
+    st.dataframe(df_historical_logs, use_container_width=True)
 else:
-    st.info(connection_status)
-
-<<<<<<< HEAD
-# ANTI KEYERROR: Ekstraksi fitur K-Means menggunakan nama kolom asli
-X_features = df_market[['Daily_Return', 'Rolling_Vol']].values
-=======
-#Format nama kolom untuk kebutuhan grafik visualisasi
-df_market.rename(columns={
-    'Daily_Return': 'Keuntungan Harian (%)',
-    'Rolling_Vol': 'Tingkat Volatilitas',
-    'Cluster': 'Klaster'
-}, inplace=True)
-
-#Jalankan Klasterisasi K-Means murni
-X_features = df_market[['Keuntungan Harian (%)', 'Tingkat Volatilitas']].values
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
-labels, final_centroids = custom_kmeans(X_features, k=k_clusters, max_iters=max_iter_input)
-df_market['Klaster'] = labels.astype(str)
-
-<<<<<<< HEAD
-# Ekstraksi Tren Masa Depan sebelum proses rename kolom dilakukan
-df_tren, nilai_slope = hitung_tren_masa_depan(df_market, hari_ke_depan=hari_proyeksi)
-
-# JURUS OUTER JOIN: Memisahkan komponen agar tidak terjadi konflik baris kosong (NaN)
-df_h = pd.DataFrame({'Tanggal': df_market['Tanggal'], 'Harga Riil': df_market['Close']})
-df_p = pd.DataFrame({'Tanggal': df_tren['Tanggal'], 'Proyeksi Tren': df_tren['Proyeksi Harga']})
-
-# Siasat agar garis tren menyambung langsung dari titik historis terakhir harga riil
-titik_jembatan = pd.DataFrame({
-    'Tanggal': [df_market['Tanggal'].max()],
-    'Proyeksi Tren': [df_market['Close'].values[-1]]
-})
-df_p = pd.concat([titik_jembatan, df_p], ignore_index=True).drop_duplicates(subset=['Tanggal'])
-
-# Gabungkan data menggunakan teknik Outer Join dan urutkan berdasarkan Tanggal
-df_visual_tren = pd.merge(df_h, df_p, on='Tanggal', how='outer').sort_values('Tanggal')
-
-# Melakukan penamaan ulang kolom data historis untuk visualisasi chart klaster
-df_market.rename(columns={
-    'Daily_Return': 'Keuntungan Harian (%)',
-    'Rolling_Vol': 'Tingkat Volatilitas',
-    'Cluster': 'Klaster'
-}, inplace=True)
-
-# --- 6. VISUALISASI DASHBOARD DENGAN SISTEM TAB ---
-tab1, tab2 = st.tabs(["🎯 Segmentasi Rezim Pasar", "🔮 Peramalan Tren Harga"])
-
-with tab1:
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.subheader("📉 Histori Pergerakan Harga")
-        st.line_chart(data=df_market, x='Tanggal', y='Close', use_container_width=True)
-        st.caption(f"Grafik harga penutupan historis untuk komponen {asset_choice}.")
-    with col2:
-        st.subheader("🎯 Pemetaan Rezim Pasar (Return vs Volatilitas)")
-        st.scatter_chart(
-            data=df_market,
-            x='Keuntungan Harian (%)',
-            y='Tingkat Volatilitas',
-            color='Klaster',
-            use_container_width=True
-        )
-        st.caption("Hasil pembagian rezim otomatis: Sumbu X (Persentase Return), Sumbu Y (Tingkat Gejolak/Volatilitas).")
-
-with tab2:
-    st.subheader(f"🔮 Proyeksi Arah Harga ke Depan ({hari_proyeksi} Hari)")
-    st.line_chart(data=df_visual_tren, x='Tanggal', y=['Harga Riil', 'Proyeksi Tren'], use_container_width=True)
-    
-    # Menampilkan KPI Status Tren Finansial secara interaktif
-    status_tren = "📈 MENAIK (Bullish)" if nilai_slope > 0 else "📉 MENURUN (Bearish)"
-    c1, c2 = st.columns(2)
-    c1.metric("Arah Tren Linear", status_tren)
-    c2.metric("Kecepatan Perubahan (Slope)", f"{nilai_slope:.4f}")
-    st.caption("Garis proyeksi dihitung murni menggunakan matriks kuadrat terkecil (Ordinary Least Squares) tanpa modul pihak ketiga.")
-
-st.divider()
-st.subheader("📋 Log Data Riwayat Pasar Terklaster")
-st.dataframe(df_market[['Tanggal', 'Close', 'Keuntungan Harian (%)', 'Tingkat Volatilitas', 'Klaster']], use_container_width=True)
-=======
-#5. VISUALISASI DASHBOARD 
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    st.subheader(f"📉 Histori Pergerakan Harga")
-    st.line_chart(data=df_market, x='Tanggal', y='Close', use_container_width=True)
-    st.caption(f"Grafik harga penutupan historis untuk komponen {asset_choice}.")
-
-with col2:
-    st.subheader("🎯 Pemetaan Rezim Pasar (Return vs Volatilitas)")
-    st.scatter_chart(
-        data=df_market,
-        x='Keuntungan Harian (%)',
-        y='Tingkat Volatilitas',
-        color='Klaster',
-        use_container_width=True
-    )
-    st.caption("Hasil pembagian rezim otomatis: Sumbu X (Persentase Return), Sumbu Y (Tingkat Gejolak/Volatilitas).")
-
-st.divider()
-st.subheader("📋 Log Data Riwayat Pasar Terklaster")
-st.dataframe(df_market[['Tanggal', 'Close', 'Keuntungan Harian (%)', 'Tingkat Volatilitas', 'Klaster']], use_container_width=True)
->>>>>>> 4bc216023ecf75d203eb237788c8c04b73b073cf
+    st.info("Database rekor audit internal masih kosong. Gunakan tombol diatas untuk mengirim entri pertama.")
