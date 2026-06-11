@@ -1,0 +1,39 @@
+name: Python Continuous Integration
+
+#Memicu pipeline berjalan setiap ada push atau pull request ke branch main
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Mengambil kode Anda dari repositori GitHub
+    - name: Checkout Codebase
+      uses: actions/checkout@v3
+
+    # 2. Menyiapkan lingkungan Python di dalam server GitHub
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    # 3. Menginstal library yang dibutuhkan, termasuk linter (flake8)
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    # 4. Mengeksekusi pemeriksaan sintaks kode (Linting)
+    - name: Lint Code with Flake8
+      run: |
+        # Menghentikan proses jika ada fatal error pada sintaks Python (E9, F63, F7, F82)
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Memeriksa standar kerapian kode (PEP-8) tanpa menghentikan pipeline
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
